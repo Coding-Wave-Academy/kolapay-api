@@ -37,6 +37,7 @@ const code = (r) => r.data && r.data.error && r.data.error.code;
   const key = r.data.apiKey;
   r = await call('POST', '/admin/teams', { body: { name: 'Smoke team B' }, admin: true });
   const keyB = r.data.apiKey;
+  const teamBId = r.data.id;
 
   r = await call('POST', '/auth/login', { body: { accountId: 'KP-0042', pin: '1234' } });
   check('no key -> MISSING_API_KEY', code(r) === 'MISSING_API_KEY', r);
@@ -155,7 +156,7 @@ const code = (r) => r.data && r.data.error && r.data.error.code;
   check('balance after the rush is exactly 400', r.data.balance === 400, r.data);
 
   r = await call('GET', '/admin/stats', { admin: true });
-  const b = r.data.data.find((t) => t.name === 'Smoke team B');
+  const b = r.data.data.find((t) => t.id === teamBId);
   check('stats count team B transfers', b && b.transfers === 12 && b.volume === 24000, b);
 
   r = await call('POST', '/admin/reset', { admin: true });

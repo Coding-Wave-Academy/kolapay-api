@@ -1,8 +1,12 @@
 // Lets async route handlers throw: Express 4 then sends the error to the error handler.
 require('express-async-errors');
 
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
+const YAML = require('yaml');
+const swaggerUi = require('swagger-ui-express');
 const config = require('./config');
 const { setup } = require('./db/setup');
 const { ApiError, errors } = require('./lib/errors');
@@ -32,7 +36,16 @@ v1.use('/contacts', require('./routes/contacts'));
 v1.use('/', require('./routes/wallet'));
 
 app.use('/v1', v1);
-app.get('/', (req, res) => res.json({ name: 'KolaPay API', docs: '/v1/health' }));
+
+// Swagger docs: interactive at /docs, raw spec at /openapi.json
+const openapi = YAML.parse(fs.readFileSync(path.join(__dirname, '..', 'docs', 'openapi.yaml'), 'utf8'));
+app.get('/openapi.json', (req, res) => res.json(openapi));
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapi, {
+  customSiteTitle: 'KolaPay API docs',
+  swaggerOptions: { persistAuthorization: true, tryItOutEnabled: true },
+}));
+
+app.get('/', (req, res) => res.json({ name: 'KolaPay API', docs: '/docs', health: '/v1/health' }));
 
 app.use((req, res, next) => next(errors.notFound(`${req.method} ${req.path}`)));
 

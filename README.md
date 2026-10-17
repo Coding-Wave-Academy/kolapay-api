@@ -32,6 +32,26 @@ curl https://<your-service>.onrender.com/v1/admin/accounts -H "x-admin-secret: <
 - The service sleeps after 15 minutes with no traffic and takes about a minute to wake. Open `/v1/health` before class. `api.js` fires an `api-waking` event when a request takes over 5 seconds, so the app can show "Waking up the server…".
 - The free database expires 30 days after creation. Fine for the course.
 
+## API docs (Swagger)
+
+The server hosts interactive docs at **`/docs`** (e.g. `https://<your-service>.onrender.com/docs`), built from `docs/openapi.yaml`. Click **Authorize**, paste a team key, log in with **Try it out**, paste the token, and every endpoint can be tried from the page. The raw spec is at `/openapi.json`; import it into any OpenAPI tool.
+
+Edit `docs/openapi.yaml` when you change an endpoint; the page updates on the next deploy.
+
+## Postman
+
+In `postman/`:
+
+- `KolaPay.postman_collection.json`: 29 requests in folders (Admin, Auth, Wallet, Transfers, Contacts, Errors, Danger zone), each with tests
+- `KolaPay-Local.postman_environment.json` and `KolaPay-Render.postman_environment.json`
+
+1. Postman → **Import** → drop in all three files. Pick the environment top right.
+2. Teams: paste the team key into `apiKey`. Organiser: fill `adminSecret` and run **1. Admin → Create team key**, which saves `apiKey` for you.
+3. Run **2. Auth → Log in**. It saves `token`, so every other request just works.
+4. To test everything at once: right-click the collection → **Run**. Skip **9. Danger zone** unless you mean to reset the data.
+
+Command line: `npx newman run postman/KolaPay.postman_collection.json -e postman/KolaPay-Local.postman_environment.json --env-var adminSecret=<secret>`
+
 ## Run locally
 
 ```bash

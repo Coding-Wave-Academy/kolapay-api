@@ -1,0 +1,584 @@
+openapi: 3.0.3
+info:
+  title: KolaPay API
+  version: 1.0.0
+  description: |
+    Practice mobile-money API for the iTek Labs JavaScript course. One shared backend for every intern team.
+
+    **How to try it here**
+    1. Click **Authorize** and paste your team key into `ApiKeyAuth`.
+    2. Open `POST /auth/login`, click **Try it out**, and log in (`KP-0042` / `1234` is the demo account).
+    3. Copy the `token` from the response, click **Authorize** again and paste it into `BearerAuth`.
+    4. Every other endpoint now works with **Try it out**.
+
+    **Rules**
+    - Money is always a whole number of FCFA (`5000`, never `"5000"`).
+    - Fees: up to 5,000 → 50 · 5,001–50,000 → 250 · above 50,000 → 500. The sender pays.
+    - Transfers: 100 to 500,000 FCFA. 3 wrong PINs lock the account for 5 minutes. Sessions last 8 hours.
+    - Every error is `{ "error": { "code", "message", "details" } }`. `message` is written for the end user.
+  contact:
+    name: iTek Labs
+servers:
+  - url: /v1
+    description: This server
+  - url: https://kolapay-api.onrender.com/v1
+    description: Render (live)
+  - url: http://localhost:4000/v1
+    description: Local
+tags:
+  - name: Health
+  - name: Auth
+    description: Log in with an account ID and PIN to get a session token.
+  - name: Wallet
+    description: Balance, history, fees and account lookup.
+  - name: Transfers
+  - name: Contacts
+  - name: Admin
+    description: For the course organiser only. Needs the `x-admin-secret` header. Never put it in api.js.
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Is the server up?
+      description: Needs no key. Use it to wake the server before class and to check for offline mode.
+      security: []
+      responses:
+        '200':
+          description: Server is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  time: { type: string, format: date-time }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in with account ID and PIN
+      description: Screen — Login. Returns a session token valid for 8 hours. 3 wrong PINs lock the account for 5 minutes.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountId, pin]
+              properties:
+                accountId: { type: string, example: KP-0042, pattern: '^KP-\d{4}$' }
+                pin: { type: string, example: '1234', pattern: '^\d{4}$', description: 'Exactly 4 digits, sent as text.' }
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, example: 9c1e4b7a0d3f4e2a8b6c5d1e7f9a2b3c4d5e6f708192a3b4 }
+                  expiresAt: { type: string, format: date-time }
+                  account: { $ref: '#/components/schemas/AccountSummary' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401':
+          description: Missing or bad API key, or wrong PIN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                wrongPin:
+                  value: { error: { code: INVALID_PIN, message: 'Wrong PIN. 2 attempts left.', details: { attemptsLeft: 2 } } }
+                missingKey:
+                  value: { error: { code: MISSING_API_KEY, message: 'This app has no API key. Add it to api.js.' } }
+        '404': { $ref: '#/components/responses/AccountNotFound' }
+        '423':
+          description: Locked after 3 wrong PINs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: { code: ACCOUNT_LOCKED, message: 'Too many wrong PINs. Try again in 5 minutes.', details: { unlocksAt: '2026-10-21T10:05:00.000Z' } } }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /me:
+    get:
+      tags: [Wallet]
+      summary: The logged-in account and its balance
+      description: Screen — Home balance card.
+      responses:
+        '200':
+          description: The account
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/AccountSummary'
+                  - type: object
+                    properties:
+                      currency: { type: string, example: XAF }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /transactions:
+    get:
+      tags: [Wallet]
+      summary: Transaction history and 7-day summary
+      description: Screens — Home recent transfers, History. Newest first.
+      parameters:
+        - name: type
+          in: query
+          schema: { type: string, enum: ['', sent, received] }
+          description: Leave out for both.
+        - name: search
+          in: query
+          schema: { type: string }
+          description: A name, an amount (commas allowed, e.g. 12,000) or a transaction ID.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: History
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Transaction' }
+                  summary: { $ref: '#/components/schemas/Summary' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /fees:
+    get:
+      tags: [Wallet]
+      summary: Fee preview for an amount
+      description: Screen — Send money summary. Use `canAfford` to disable the Continue button.
+      parameters:
+        - name: amount
+          in: query
+          required: true
+          schema: { type: integer, minimum: 100, maximum: 500000, example: 30000 }
+      responses:
+        '200':
+          description: Fee quote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeeQuote' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /accounts/{id}:
+    get:
+      tags: [Wallet]
+      summary: Name behind an account ID
+      description: Screens — Send money (confirm the recipient), Add contact.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, example: KP-0107 }
+      responses:
+        '200':
+          description: The account's public details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, example: KP-0107 }
+                  name: { type: string, example: Ayuk Eta }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/AccountNotFound' }
+
+  /transfers:
+    post:
+      tags: [Transfers]
+      summary: Send money
+      description: |
+        Screens — Send money, Money sent. Atomic: the balance can never go below 0, even with many transfers at once.
+        The sender pays `amount + fee`; the recipient receives `amount`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, amount]
+              properties:
+                to: { type: string, example: KP-0107 }
+                amount: { type: integer, minimum: 100, maximum: 500000, example: 5000, description: 'A number, not text. Use Number(input.value).' }
+                note: { type: string, maxLength: 140, example: Eru at Buea market }
+      responses:
+        '201':
+          description: Sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transaction: { $ref: '#/components/schemas/Transaction' }
+                  balance: { type: integer, example: 19950, description: New balance after the transfer }
+        '400':
+          description: Bad amount, too small, too large, or sent to yourself
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                amountAsText:
+                  value: { error: { code: VALIDATION_ERROR, message: 'Amount must be a number, not text. Use Number() before sending.', details: { field: amount } } }
+                tooSmall:
+                  value: { error: { code: AMOUNT_TOO_SMALL, message: 'The minimum transfer is 100 FCFA.', details: { min: 100 } } }
+                tooLarge:
+                  value: { error: { code: AMOUNT_TOO_LARGE, message: 'The maximum transfer is 500,000 FCFA.', details: { max: 500000 } } }
+                self:
+                  value: { error: { code: SELF_TRANSFER, message: "You can't send money to your own account." } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/AccountNotFound' }
+        '422':
+          description: Not enough money for amount + fee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: { code: INSUFFICIENT_FUNDS, message: 'You need 5,250 FCFA more. Your balance is 25,000 FCFA.', details: { total: 30250, balance: 25000, needed: 5250 } } }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /contacts:
+    get:
+      tags: [Contacts]
+      summary: List contacts, favourites first
+      description: Screens — Contacts, Quick send.
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Part of a name or account ID.
+      responses:
+        '200':
+          description: Contacts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Contact' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Contacts]
+      summary: Add a contact
+      description: Screen — Add contact. `name` is optional; the account's own name is used when it's left out.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountId]
+              properties:
+                accountId: { type: string, example: KP-1001 }
+                name: { type: string, maxLength: 60, example: Brenda Achu }
+      responses:
+        '201':
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Contact' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/AccountNotFound' }
+        '409':
+          description: Already a contact
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: { code: CONTACT_EXISTS, message: 'This person is already in your contacts.', details: { contactId: 7 } } }
+
+  /contacts/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, example: 7 }
+    patch:
+      tags: [Contacts]
+      summary: Favourite or rename a contact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                favourite: { type: boolean, example: true }
+                name: { type: string, maxLength: 60, example: Grace }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Contact' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Contacts]
+      summary: Remove a contact
+      responses:
+        '204': { description: 'Removed, no body' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/teams:
+    post:
+      tags: [Admin]
+      summary: Create a team and its API key
+      description: The key is returned once. Save it.
+      security:
+        - AdminSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: Team 1 }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer, example: 1 }
+                  name: { type: string, example: Team 1 }
+                  apiKey: { type: string, example: kp_team_3f9a1c2b4d5e6f708192a3b4c5d6e7f8 }
+                  warning: { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [Admin]
+      summary: List teams (no keys)
+      security:
+        - AdminSecret: []
+      responses:
+        '200': { description: Teams }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/teams/{id}/revoke:
+    post:
+      tags: [Admin]
+      summary: Revoke a team's key
+      security:
+        - AdminSecret: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Revoked }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/accounts:
+    get:
+      tags: [Admin]
+      summary: All accounts, with intern starting PINs
+      description: Use it to print the PIN slips. Intern PINs are derived from ADMIN_SECRET.
+      security:
+        - AdminSecret: []
+      responses:
+        '200':
+          description: Accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, example: KP-1001 }
+                        name: { type: string, example: Intern 01 }
+                        balance: { type: integer, example: 25000 }
+                        intern: { type: boolean }
+                        startingPin: { type: string, example: '4821' }
+                        locked: { type: boolean }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/accounts/{id}:
+    patch:
+      tags: [Admin]
+      summary: Rename, reset PIN, set balance or unlock
+      security:
+        - AdminSecret: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, example: KP-1001 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, example: Brenda Achu }
+                pin: { type: string, example: '2468' }
+                balance: { type: integer, example: 25000 }
+                unlock: { type: boolean, example: true }
+      responses:
+        '200': { description: Updated }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AccountNotFound' }
+
+  /admin/stats:
+    get:
+      tags: [Admin]
+      summary: Transfers and volume per team
+      security:
+        - AdminSecret: []
+      responses:
+        '200': { description: Stats }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/reset:
+    post:
+      tags: [Admin]
+      summary: Restore the seed data (keeps team keys)
+      description: Wipes accounts, contacts, sessions and transactions, then reloads the seed. Use before Demo Day.
+      security:
+        - AdminSecret: []
+      responses:
+        '200': { description: Reset done }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+security:
+  - ApiKeyAuth: []
+    BearerAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Your team key, e.g. kp_team_3f9a…
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: The token from POST /auth/login
+    AdminSecret:
+      type: apiKey
+      in: header
+      name: x-admin-secret
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [MISSING_API_KEY, INVALID_API_KEY, MISSING_TOKEN, SESSION_EXPIRED, ACCOUNT_NOT_FOUND, INVALID_PIN, ACCOUNT_LOCKED,
+                VALIDATION_ERROR, AMOUNT_TOO_SMALL, AMOUNT_TOO_LARGE, SELF_TRANSFER, INSUFFICIENT_FUNDS, CONTACT_EXISTS,
+                NOT_FOUND, FORBIDDEN, RATE_LIMITED, SERVER_ERROR]
+            message: { type: string, description: 'Written for the end user. Safe to show as-is.' }
+            details: { type: object, additionalProperties: true }
+    AccountSummary:
+      type: object
+      properties:
+        id: { type: string, example: KP-0042 }
+        name: { type: string, example: Nkeng Ashu }
+        balance: { type: integer, example: 25000 }
+    Transaction:
+      type: object
+      properties:
+        id: { type: string, example: TX-1019-0042 }
+        type: { type: string, enum: [sent, received] }
+        amount: { type: integer, example: 5000 }
+        fee: { type: integer, example: 50, description: 0 on received transactions }
+        total: { type: integer, example: 5050, description: amount + fee }
+        counterparty:
+          type: object
+          properties:
+            id: { type: string, example: KP-0107 }
+            name: { type: string, example: Ayuk Eta }
+        note: { type: string, example: Eru at Buea market }
+        createdAt: { type: string, format: date-time }
+    Summary:
+      type: object
+      description: Last 7 days for the logged-in account
+      properties:
+        sent: { type: integer, example: 18500 }
+        received: { type: integer, example: 13300 }
+        fees: { type: integer, example: 350 }
+        count: { type: integer, example: 6 }
+    FeeQuote:
+      type: object
+      properties:
+        amount: { type: integer, example: 30000 }
+        fee: { type: integer, example: 250 }
+        total: { type: integer, example: 30250 }
+        canAfford: { type: boolean, example: false }
+        balance: { type: integer, example: 25000 }
+    Contact:
+      type: object
+      properties:
+        id: { type: integer, example: 7 }
+        accountId: { type: string, example: KP-0213 }
+        name: { type: string, example: Bih Grace }
+        favourite: { type: boolean, example: false }
+
+  responses:
+    Unauthorized:
+      description: Missing or bad API key, or missing or expired session token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            missingToken:
+              value: { error: { code: MISSING_TOKEN, message: 'Please log in first.' } }
+            expired:
+              value: { error: { code: SESSION_EXPIRED, message: 'Your session has expired. Please log in again.' } }
+            badKey:
+              value: { error: { code: INVALID_API_KEY, message: 'This API key is not valid. Check api.js.' } }
+    ValidationError:
+      description: A field is missing or in the wrong format
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: VALIDATION_ERROR, message: 'Account IDs look like KP-0042.', details: { field: accountId } } }
+    AccountNotFound:
+      description: No account with that ID
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: ACCOUNT_NOT_FOUND, message: 'No account found with ID KP-9999.', details: { accountId: KP-9999 } } }
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: NOT_FOUND, message: 'That contact was not found.' } }
+    Forbidden:
+      description: Wrong or missing x-admin-secret
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: FORBIDDEN, message: 'You are not allowed to do this.' } }
+    RateLimited:
+      description: More than 300 requests a minute from one team key
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: RATE_LIMITED, message: 'Too many requests. Wait a minute and try again.', details: { retryAfter: 60 } } }
