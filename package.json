@@ -1,0 +1,25 @@
+{
+  "name": "kolapay-api",
+  "version": "1.0.0",
+  "description": "KolaPay: practice mobile-money API for the iTek Labs JavaScript course",
+  "main": "src/server.js",
+  "private": true,
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "db:setup": "node src/db/setup.js",
+    "test": "node test/smoke.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "2.4.3",
+    "cors": "2.8.5",
+    "dotenv": "16.4.7",
+    "express": "4.21.2",
+    "express-async-errors": "3.1.1",
+    "express-rate-limit": "7.5.0",
+    "pg": "8.13.1"
+  }
+}

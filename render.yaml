@@ -1,0 +1,32 @@
+# Render Blueprint: creates the API and its Postgres database in one go.
+# Render dashboard -> New -> Blueprint -> pick this repo.
+# Frankfurt is the closest Render region to Cameroon.
+services:
+  - type: web
+    name: kolapay-api
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kolapay-db
+          property: connectionString
+      - key: ADMIN_SECRET
+        generateValue: true
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: PIN_LOCK_MINUTES
+        value: "5"
+
+databases:
+  - name: kolapay-db
+    plan: free
+    region: frankfurt
+    databaseName: kolapay
+    user: kolapay
